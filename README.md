@@ -1,3 +1,3 @@
 # UART Example
 
-Implement a IR based chat
+Implement an IR based chat
