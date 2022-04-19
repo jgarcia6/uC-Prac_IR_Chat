@@ -15,9 +15,25 @@
 #define UART_RX_PIN     (3)
 #define UART_TX_PIN     (1)
 
+#define UART2_RX        16
+#define UART2_TX        17
+#define UART2_BAUDS     4250
+
+#define UART1_TX        2
+#define UART1_RX        4
+#define UART1_BAUDS     (38000*3)
+
+#define UART_IR_TX      1
+#define UART_IR_RX      2
+
 #define UARTS_BAUD_RATE         (115200)
 #define TASK_STACK_SIZE         (1048)
 #define READ_BUF_SIZE           (1024)
+
+#define IR_LOW     0x5B    //0b101 1011
+#define IR_HIGH    0x00
+
+#define MAX_SIZE    255
 
 /* Message printed by the "consoletest" command.
  * It will also be used by the default UART to check the reply of the second
@@ -34,8 +50,8 @@ void uartInit(uart_port_t uart_num, uint32_t baudrate, uint8_t size, uint8_t par
     /* Configure parameters of an UART driver,
      * communication pins and install the driver */
     uart_config_t uart_config = {
-        .baud_rate = UARTS_BAUD_RATE,
-        .data_bits = UART_DATA_8_BITS,
+        .baud_rate = baudrate,
+        .data_bits = size-5,
         .parity    = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
@@ -93,23 +109,68 @@ char uartGetchar(uart_port_t uart_num)
 
     return c;
 }
+
+void IR_SendBit(uint8_t bit)
+{
+    if (bit)
+    {   
+        uartPutchar(UART_IR_TX, IR_HIGH);
+        uartPutchar(UART_IR_TX, IR_HIGH);
+        uartPutchar(UART_IR_TX, IR_HIGH);
+    }
+    else
+    {        
+        uartPutchar(UART_IR_TX, IR_LOW);
+        uartPutchar(UART_IR_TX, IR_LOW);
+        uartPutchar(UART_IR_TX, IR_LOW);
+    }
+}
+
+void IR_SendByte(uint8_t data)
+{
+    //Start Bit
+    IR_SendBit(0);
+
+    for (uint8_t bitIdx = 0; bitIdx < 8; bitIdx++)
+    {
+        IR_SendBit(data & 1);  
+        data >>= 1;  
+    }
+    //Stop Bit
+    IR_SendBit(1);
+}
+
+void IR_SendPacket(uint8_t *data, uint8_t len)
+{
+    // Preambulo 0xCO, 0xD1, 0xCE
+    // Header
+        // Payload Length
+        // Checksum8  
+    // Payload = Data
+    // Checksum16
+}
+
+uint8_t IR_ReceivePacket(uint8_t *data)
+{
+    // Preambulo // verify
+    // Header   //verify
+    // Payload  //process
+    // Checksum
+}
+
 void app_main(void)
 {
-// The following is only example code, delete this and implement
-// what is inside the TO_IMPLEMENT check
-    char payload[] = "Hola mundo!";
-
     uartInit(0, 115200, 8, 0, 1, UART_TX_PIN, UART_RX_PIN);
+    uartInit(1, UART1_BAUDS, 8, 0, 1, UART1_TX, UART1_RX);
+    uartInit(2, UART2_BAUDS, 8, 0, 1, UART2_TX, UART2_RX);
+    
+
     delayMs(500);
     uartGoto11(UART_NUM);
+    delayMs(500);
+    uartPutchar(UART_NUM, '#');
     uartClrScr(UART_NUM);
 
-    uartPutchar(UART_NUM,payload[0]);
-    uartPutchar(UART_NUM,payload[1]);
-    uartPutchar(UART_NUM,payload[2]);
-    uartPutchar(UART_NUM,payload[3]);
-    uartPutchar(UART_NUM,payload[10]);
-    
     // Wait for input
     delayMs(500);
     
@@ -117,6 +178,13 @@ void app_main(void)
     while(1)
     {
         uartPutchar(UART_NUM,uartGetchar(UART_NUM));
+        IR_SendByte('U');
+        delayMs(50);
+        if (uartKbhit(UART_IR_RX))
+        {
+            uartPutchar(UART_NUM,uartGetchar(UART_IR_RX));
+        }
+        
     }
 
 #ifdef TO_IMPLEMENT
