@@ -15,11 +15,13 @@
 #define UART_RX_PIN     (3)
 #define UART_TX_PIN     (1)
 
+#define UART_IR_DIV     6
+
 #define UART2_RX        16
 #define UART2_TX        17
-#define UART2_BAUDS     4250
+#define UART2_BAUDS     (700)
 
-#define UART1_TX        2
+#define UART1_TX        15
 #define UART1_RX        4
 #define UART1_BAUDS     (38000*3)
 
@@ -114,15 +116,21 @@ void IR_SendBit(uint8_t bit)
 {
     if (bit)
     {   
-        uartPutchar(UART_IR_TX, IR_HIGH);
-        uartPutchar(UART_IR_TX, IR_HIGH);
-        uartPutchar(UART_IR_TX, IR_HIGH);
+        for (uint8_t i = 0; i < UART_IR_DIV; i++)
+        {
+            uartPutchar(UART_IR_TX, IR_HIGH);
+            uartPutchar(UART_IR_TX, IR_HIGH);
+            uartPutchar(UART_IR_TX, IR_HIGH);
+        }
     }
     else
     {        
-        uartPutchar(UART_IR_TX, IR_LOW);
-        uartPutchar(UART_IR_TX, IR_LOW);
-        uartPutchar(UART_IR_TX, IR_LOW);
+        for (uint8_t i = 0; i < UART_IR_DIV; i++)
+        {
+            uartPutchar(UART_IR_TX, IR_LOW);
+            uartPutchar(UART_IR_TX, IR_LOW);
+            uartPutchar(UART_IR_TX, IR_LOW);
+        }
     }
 }
 
@@ -156,12 +164,13 @@ uint8_t IR_ReceivePacket(uint8_t *data)
     // Header   //verify
     // Payload  //process
     // Checksum
+    return 0;
 }
 
 void app_main(void)
 {
     uartInit(0, 115200, 8, 0, 1, UART_TX_PIN, UART_RX_PIN);
-    uartInit(1, UART1_BAUDS, 8, 0, 1, UART1_TX, UART1_RX);
+    uartInit(1, UART1_BAUDS, 7, 0, 1, UART1_TX, UART1_RX);
     uartInit(2, UART2_BAUDS, 8, 0, 1, UART2_TX, UART2_RX);
     
 
@@ -186,50 +195,4 @@ void app_main(void)
         }
         
     }
-
-#ifdef TO_IMPLEMENT
-    char cad[20];
-    char cadUart3[20];
-    uint16_t num;
-
-    uartInit(0,12345,8,1,2);
-    uartInit(1,115200,8,0,1);
-    uartInit(2,115200,8,0,1);
-    while(1) 
-    {
-        uartGetchar(0);
-        uartClrScr(0);
-
-        uartGotoxy(0,2,2);
-        uartSetColor(0,YELLOW);
-        uartPuts(0,"Introduce un número:");
-        
-        uartGotoxy(0,22,2);
-        uartSetColor(0,GREEN);
-        uartGets(0,cad);
-// For the following code to work, TX1 must be physically 
-// connected with a jumper wire to RX2
-// -------------------------------------------
-        // Cycle through UART1->UART2
-        uartPuts(1,cad);
-        uartPuts(1,"\r");
-        uartGets(2,cadUart3);
-        uartGotoxy(0,5,3);
-        uartPuts(0,cadUart3);
-// -------------------------------------------
-        num = myAtoi(cad);
-        myItoa(num,cad,16);
-        
-        uartGotoxy(0,5,4);
-        uartSetColor(0,BLUE);
-        uartPuts(0,"Hex: ");
-        uartPuts(0,cad);
-        myItoa(num,cad,2);
-        
-        uartGotoxy(0,5,5);
-        uartPuts(0,"Bin: ");
-        uartPuts(0,cad);
-    }
-#endif
-
 }
