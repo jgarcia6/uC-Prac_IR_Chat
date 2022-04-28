@@ -47,6 +47,8 @@
 #define IR_RX_BAUDS         ((IR_FREQ / (IR_BIT_SIZE + 2)) / UART_IR_DIV) //= ~700
 #else // Timer mode
 #include "driver/ledc.h"
+#include "freertos/queue.h"
+#include "driver/timer.h"
 
 #define LEDC_TIMER              LEDC_TIMER_0
 #define LEDC_MODE               LEDC_LOW_SPEED_MODE
@@ -80,6 +82,53 @@ static void ledc_init(void)
         .hpoint         = 0
     };
     ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+}
+
+/* Timer interrupt service routine */
+static void IRAM_ATTR timer0_ISR(void *ptr)
+{
+    static uint8_t bState = 0;
+    if (bState)
+    {
+        bState = 0;
+        ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, 0));
+    }
+    else
+    {
+        bState = 1;
+        ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY));
+    }
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL));
+}
+
+#define TIMER_INTR_US          1000                                 // Execution time of each ISR interval in micro-seconds
+#define TIMER_DIVIDER         (16)                                  //  Hardware timer clock divider
+#define TIMER_TICKS            (TIMER_BASE_CLK / TIMER_DIVIDER)     // TIMER_BASE_CLK = APB_CLK = 80MHz
+#define SEC_TO_MICRO_SEC(x)    ((x) / 1000 / 1000)                  // Convert second to micro-second
+#define ALARM_VAL_US           SEC_TO_MICRO_SEC(TIMER_INTR_US * TIMER_TICKS)     // Alarm value in micro-seconds
+/* Timer group0 TIMER_0 initialization */
+static void timer0_init(void)
+{
+    esp_err_t ret;
+    timer_config_t config = {
+        .divider = TIMER_DIVIDER,
+        .counter_dir = TIMER_COUNT_UP,
+        .counter_en = TIMER_PAUSE,
+        .alarm_en = TIMER_ALARM_EN,
+        .intr_type = TIMER_INTR_LEVEL,
+        .auto_reload = 1,
+    };
+
+    ret = timer_init(TIMER_GROUP_0, TIMER_0, &config);
+    ESP_ERROR_CHECK(ret);
+    ret = timer_set_counter_value(TIMER_GROUP_0, TIMER_0, 0x00000000ULL);
+    ESP_ERROR_CHECK(ret);
+    ret = timer_set_alarm_value(TIMER_GROUP_0, TIMER_0, ALARM_VAL_US);
+    ESP_ERROR_CHECK(ret);
+    ret = timer_enable_intr(TIMER_GROUP_0, TIMER_0);
+    ESP_ERROR_CHECK(ret);
+    /* Register an ISR handler */
+    timer_isr_register(TIMER_GROUP_0, TIMER_0, timer0_ISR, NULL, 0, NULL);
 }
 
 #endif
@@ -220,8 +269,7 @@ void app_main(void)
     uartInit(IR_TX_UART_PORT, IR_TX_BAUDS, IR_BIT_SIZE, 0, 1, IR_TX_TX_PIN, IR_TX_RX_PIN);
 #else
     ledc_init();
-    ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY));
-    ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL));
+    timer0_init();
 #endif
     uartInit(IR_RX_UART_PORT, IR_RX_BAUDS, 8, 0, 1, IR_RX_TX_PIN, IR_RX_RX_PIN);
     
