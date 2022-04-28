@@ -102,7 +102,7 @@ static void IRAM_ATTR timer0_ISR(void *ptr)
         bState = 1;
         ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY));
     }
-    //ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL));
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL));
 }
 
 #define TIMER_INTR_US          1000                                 // Execution time of each ISR interval in micro-seconds
