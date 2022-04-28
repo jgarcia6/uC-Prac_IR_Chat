@@ -31,13 +31,13 @@
 #define IR_FREQ             38000
 #define MAX_PACKET_SIZE     255
 
-#define SCHEME UART_SEND_SCHEME
+#define IR_TX_TX_PIN        15
+
+#define SCHEME TIMER_SEND_SCHEME
 #if SCHEME == UART_SEND_SCHEME
 // UART 1 used for IR TX
 #define IR_TX_UART_PORT     1
-#define IR_TX_TX_PIN        15
 #define IR_TX_RX_PIN        4
-
 #define IR_BIT_SIZE         7
 #define IR_MUL              3
 #define IR_LOW              0x5B   //0b101 1011
@@ -45,29 +45,46 @@
 #define UART_IR_DIV         6
 #define IR_TX_BAUDS         (IR_FREQ*IR_MUL)
 #define IR_RX_BAUDS         ((IR_FREQ / (IR_BIT_SIZE + 2)) / UART_IR_DIV) //= ~700
-#else
-#define IR_BIT_SIZE     8
-#define IR_LOW          0xF0//0x38   //0b 111000
-#define IR_MUL          9
-#define IR_TX_BAUDS     380000UL //(38000*IR_MUL)
+#else // Timer mode
+#include "driver/ledc.h"
 
-char caIrHigh[] = {IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,
-                    IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,IR_HIGH,};
-char caIrLow[] = {IR_LOW,IR_LOW,IR_LOW,IR_LOW,IR_LOW,IR_LOW,IR_LOW,IR_LOW,IR_LOW,IR_LOW,IR_LOW,IR_LOW,
-                    IR_LOW,IR_LOW,IR_LOW,IR_LOW,IR_LOW,IR_LOW,IR_LOW,IR_LOW,IR_LOW,IR_LOW,IR_LOW,IR_LOW};
+#define LEDC_TIMER              LEDC_TIMER_0
+#define LEDC_MODE               LEDC_LOW_SPEED_MODE
+#define LEDC_OUTPUT_IO          (IR_TX_TX_PIN) // Define the output GPIO
+#define LEDC_CHANNEL            LEDC_CHANNEL_0
+#define LEDC_DUTY_RES           LEDC_TIMER_8_BIT // Set duty resolution to 13 bits
+#define LEDC_DUTY               ((((1 << 8) - 1) * 2) / 3) // Set duty to 66%. 
+#define LEDC_FREQUENCY          (38000) // Frequency in Hertz. Set frequency at 5 kHz
+#define IR_RX_BAUDS             (1000)
+
+static void ledc_init(void)
+{
+    // Prepare and then apply the LEDC PWM timer configuration
+    ledc_timer_config_t ledc_timer = {
+        .speed_mode       = LEDC_MODE,
+        .timer_num        = LEDC_TIMER,
+        .duty_resolution  = LEDC_DUTY_RES,
+        .freq_hz          = LEDC_FREQUENCY,  // Set output frequency at 5 kHz
+        .clk_cfg          = LEDC_AUTO_CLK
+    };
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+
+    // Prepare and then apply the LEDC PWM channel configuration
+    ledc_channel_config_t ledc_channel = {
+        .speed_mode     = LEDC_MODE,
+        .channel        = LEDC_CHANNEL,
+        .timer_sel      = LEDC_TIMER,
+        .intr_type      = LEDC_INTR_DISABLE,
+        .gpio_num       = LEDC_OUTPUT_IO,
+        .duty           = 0, // Set duty to 0%
+        .hpoint         = 0
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+}
 
 #endif
 
-/* Message printed by the "consoletest" command.
- * It will also be used by the default UART to check the reply of the second
- * UART. As end of line characters are not standard here (\n, \r\n, \r...),
- * let's not include it in this string. */
-const char test_message[] = "This is an example string, if you can read this, the example is a success!";
 
-/**
- * @brief Configure and install the default UART, then, connect it to the
- * console UART.
- */
 void uartInit(uart_port_t uart_num, uint32_t baudrate, uint8_t size, uint8_t parity, uint8_t stop, uint8_t txPin, uint8_t rxPin)
 {
     /* Configure parameters of an UART driver,
@@ -145,7 +162,7 @@ void IR_SendBit(uint8_t bit)
             uartPutchar(IR_TX_UART_PORT, IR_HIGH);
         }
 #else
-    uart_write_bytes(IR_TX_UART_PORT, caIrHigh, sizeof(caIrHigh));
+    // start timer and put value in circular buffer
 #endif
     }
     else
@@ -158,7 +175,7 @@ void IR_SendBit(uint8_t bit)
             uartPutchar(IR_TX_UART_PORT, IR_LOW);
         }
 #else
-    uart_write_bytes(IR_TX_UART_PORT, caIrLow, sizeof(caIrLow));
+    // start timer and put value in circular buffer
 #endif
     }
 }
@@ -201,6 +218,10 @@ void app_main(void)
     uartInit(PC_UART_PORT, PC_UARTS_BAUD_RATE, 8, 0, 1, PC_UART_TX_PIN, PC_UART_RX_PIN);
 #if SCHEME == UART_SEND_SCHEME
     uartInit(IR_TX_UART_PORT, IR_TX_BAUDS, IR_BIT_SIZE, 0, 1, IR_TX_TX_PIN, IR_TX_RX_PIN);
+#else
+    ledc_init();
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY));
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL));
 #endif
     uartInit(IR_RX_UART_PORT, IR_RX_BAUDS, 8, 0, 1, IR_RX_TX_PIN, IR_RX_RX_PIN);
     
