@@ -87,6 +87,8 @@ static void ledc_init(void)
 /* Timer interrupt service routine */
 static void IRAM_ATTR timer0_ISR(void *ptr)
 {
+    timer_group_clr_intr_status_in_isr(TIMER_GROUP_0, TIMER_0);
+    timer_group_enable_alarm_in_isr(TIMER_GROUP_0, TIMER_0);
     
     static uint8_t bState = 0;
 
