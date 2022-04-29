@@ -115,19 +115,19 @@ static void IRAM_ATTR timer0_ISR(void *ptr)
         if (bState)
         {
             bState = 0;
-            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, 0));
+            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY));
         }
         else
         {
             bState = 1;
-            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY));
+            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, 0));
         }
     }
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL));
 }
 
-#define TIMER_INTR_US          2000                                 // Execution time of each ISR interval in micro-seconds
-#define IR_RX_BAUDS            (500)
+#define TIMER_INTR_US          1000                                 // Execution time of each ISR interval in micro-seconds
+#define IR_RX_BAUDS            1000
 #define TIMER_DIVIDER          (256)                                  //  Hardware timer clock divider
 #define TIMER_TICKS            (TIMER_BASE_CLK / TIMER_DIVIDER)     // TIMER_BASE_CLK = APB_CLK = 80MHz
 #define SEC_TO_MICRO_SEC(x)    ((x) / 1000 / 1000)                  // Convert second to micro-second
@@ -238,22 +238,12 @@ void IR_SendBit(uint8_t bit)
         }
 #else
     // start timer and put value in circular buffer
-    sIrSendBuffer.buffer[sIrSendBuffer.in_idx] = 0; //0
+    sIrSendBuffer.buffer[sIrSendBuffer.in_idx] = 0; 
     sIrSendBuffer.in_idx = MOD(sIrSendBuffer.in_idx+1);
-
-    sIrSendBuffer.buffer[sIrSendBuffer.in_idx] = 0; //1
-    sIrSendBuffer.in_idx = MOD(sIrSendBuffer.in_idx+1);
-
-    sIrSendBuffer.buffer[sIrSendBuffer.in_idx] = 0; //2
-    sIrSendBuffer.in_idx = MOD(sIrSendBuffer.in_idx+1);
-
-    sIrSendBuffer.buffer[sIrSendBuffer.in_idx] = 0; //3
-    sIrSendBuffer.in_idx = MOD(sIrSendBuffer.in_idx+1);
-
 #endif
     }
     else
-    {        
+    {
 #if SCHEME == UART_SEND_SCHEME
         for (uint8_t i = 0; i < UART_IR_DIV; i++)
         {
@@ -279,7 +269,9 @@ void IR_SendByte(uint8_t data)
         IR_SendBit(data & 1);  
         data >>= 1;  
     }
-    //Stop Bit
+    // Stop Bit
+    IR_SendBit(1);
+    // Sending 2nd stop bit to prevent accumulation error
     IR_SendBit(1);
 }
 
@@ -308,7 +300,6 @@ void app_main(void)
     delayMs(500);
     uartGoto11(PC_UART_PORT);
     delayMs(500);
-    uartPutchar(PC_UART_PORT, '<');
     uartClrScr(PC_UART_PORT);
 #if SCHEME == UART_SEND_SCHEME
     uartInit(IR_TX_UART_PORT, IR_TX_BAUDS, IR_BIT_SIZE, 0, 1, IR_TX_TX_PIN, IR_TX_RX_PIN);
@@ -322,7 +313,6 @@ void app_main(void)
     timer_start(TIMER_GROUP_0, TIMER_0);
 #endif
     uartInit(IR_RX_UART_PORT, IR_RX_BAUDS, 8, 0, 1, IR_RX_TX_PIN, IR_RX_RX_PIN);
-    uartPutchar(PC_UART_PORT, '>');
     
     // Wait for input
     delayMs(500);
@@ -330,20 +320,35 @@ void app_main(void)
     // echo forever
     while(1)
     {
+#ifdef ASCII_TEST
         uartPutchar(PC_UART_PORT,uartGetchar(PC_UART_PORT));
-        IR_SendByte('H');
-        IR_SendByte('e');
-        IR_SendByte('l');
-        IR_SendByte('l');
-        IR_SendByte('o');
-        IR_SendByte('!');
-        delayMs(50);
+
+        for (uint8_t data = 33; data < 127; data++)
+        {
+            IR_SendByte(data);
+        }
+
+        delayMs(500);
         while (uartKbhit(IR_RX_UART_PORT))
         {
             uartPutchar(PC_UART_PORT,'{');
             uartPutchar(PC_UART_PORT,uartGetchar(IR_RX_UART_PORT));
             uartPutchar(PC_UART_PORT,'}');
         }
-        
+#else
+        // Check if a key has been pressed
+        if (uartKbhit(PC_UART_PORT))
+        {
+            // Send data over IR
+            IR_SendByte(uartGetchar(PC_UART_PORT));
+        }
+        // Check if we have received any data over IR
+        if (uartKbhit(IR_RX_UART_PORT))
+        {
+            // Send it over to the PC terminal
+            uartPutchar(PC_UART_PORT,uartGetchar(IR_RX_UART_PORT));
+        }
+        delayMs(1);
+#endif
     }
 }
