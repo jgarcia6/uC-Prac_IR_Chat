@@ -50,6 +50,20 @@
 #include "freertos/queue.h"
 #include "driver/timer.h"
 
+#define BUFFER_SIZE (1<<11) //2048 //2K 
+
+#define MOD(n)                  ( (n) & (BUFFER_SIZE-1))
+#define IS_BUFFER_EMPTY(buff)   (buff.in_idx == buff.out_idx)
+#define IS_BUFFER_FULL(buff)    (MOD(buff.in_idx + 1) == buff.out_idx)
+
+typedef struct{
+    uint8_t buffer[BUFFER_SIZE];
+    uint16_t in_idx;
+    uint16_t out_idx;
+}sBufferCircular_t;
+
+sBufferCircular_t sIrSendBuffer;
+
 #define LEDC_TIMER              LEDC_TIMER_0
 #define LEDC_MODE               LEDC_LOW_SPEED_MODE
 #define LEDC_OUTPUT_IO          (IR_TX_TX_PIN) // Define the output GPIO
@@ -57,7 +71,6 @@
 #define LEDC_DUTY_RES           LEDC_TIMER_8_BIT // Set duty resolution to 13 bits
 #define LEDC_DUTY               ((((1 << 8) - 1) * 2) / 3) // Set duty to 66%. 
 #define LEDC_FREQUENCY          (38000) // Frequency in Hertz. Set frequency at 5 kHz
-#define IR_RX_BAUDS             (1000)
 
 static void ledc_init(void)
 {
@@ -90,23 +103,32 @@ static void IRAM_ATTR timer0_ISR(void *ptr)
     timer_group_clr_intr_status_in_isr(TIMER_GROUP_0, TIMER_0);
     timer_group_enable_alarm_in_isr(TIMER_GROUP_0, TIMER_0);
     
-    static uint8_t bState = 0;
-
-    if (bState)
+    if (IS_BUFFER_EMPTY(sIrSendBuffer))
     {
-        bState = 0;
         ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, 0));
     }
     else
     {
-        bState = 1;
-        ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY));
+        uint8_t bState = sIrSendBuffer.buffer[sIrSendBuffer.out_idx];
+        sIrSendBuffer.out_idx = MOD(sIrSendBuffer.out_idx + 1);
+
+        if (bState)
+        {
+            bState = 0;
+            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, 0));
+        }
+        else
+        {
+            bState = 1;
+            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY));
+        }
     }
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL));
 }
 
-#define TIMER_INTR_US          1000                                 // Execution time of each ISR interval in micro-seconds
-#define TIMER_DIVIDER         (256)                                  //  Hardware timer clock divider
+#define TIMER_INTR_US          2000                                 // Execution time of each ISR interval in micro-seconds
+#define IR_RX_BAUDS            (500)
+#define TIMER_DIVIDER          (256)                                  //  Hardware timer clock divider
 #define TIMER_TICKS            (TIMER_BASE_CLK / TIMER_DIVIDER)     // TIMER_BASE_CLK = APB_CLK = 80MHz
 #define SEC_TO_MICRO_SEC(x)    ((x) / 1000 / 1000)                  // Convert second to micro-second
 #define ALARM_VAL_US           SEC_TO_MICRO_SEC(TIMER_INTR_US * TIMER_TICKS)     // Alarm value in micro-seconds
@@ -216,6 +238,18 @@ void IR_SendBit(uint8_t bit)
         }
 #else
     // start timer and put value in circular buffer
+    sIrSendBuffer.buffer[sIrSendBuffer.in_idx] = 0; //0
+    sIrSendBuffer.in_idx = MOD(sIrSendBuffer.in_idx+1);
+
+    sIrSendBuffer.buffer[sIrSendBuffer.in_idx] = 0; //1
+    sIrSendBuffer.in_idx = MOD(sIrSendBuffer.in_idx+1);
+
+    sIrSendBuffer.buffer[sIrSendBuffer.in_idx] = 0; //2
+    sIrSendBuffer.in_idx = MOD(sIrSendBuffer.in_idx+1);
+
+    sIrSendBuffer.buffer[sIrSendBuffer.in_idx] = 0; //3
+    sIrSendBuffer.in_idx = MOD(sIrSendBuffer.in_idx+1);
+
 #endif
     }
     else
@@ -229,6 +263,8 @@ void IR_SendBit(uint8_t bit)
         }
 #else
     // start timer and put value in circular buffer
+    sIrSendBuffer.buffer[sIrSendBuffer.in_idx] = 1;
+    sIrSendBuffer.in_idx = MOD(sIrSendBuffer.in_idx+1);
 #endif
     }
 }
@@ -277,6 +313,10 @@ void app_main(void)
 #if SCHEME == UART_SEND_SCHEME
     uartInit(IR_TX_UART_PORT, IR_TX_BAUDS, IR_BIT_SIZE, 0, 1, IR_TX_TX_PIN, IR_TX_RX_PIN);
 #else
+    // Init Circular Buffer
+    sIrSendBuffer.in_idx = 0;
+    sIrSendBuffer.out_idx = 0;
+
     ledc_init();
     timer0_init();
     timer_start(TIMER_GROUP_0, TIMER_0);
