@@ -70,7 +70,7 @@ sBufferCircular_t sIrSendBuffer;
 #define LEDC_CHANNEL            LEDC_CHANNEL_0
 #define LEDC_DUTY_RES           LEDC_TIMER_8_BIT // Set duty resolution to 13 bits
 #define LEDC_DUTY               ((((1 << 8) - 1) * 2) / 3) // Set duty to 66%. 
-#define LEDC_FREQUENCY          (38000) // Frequency in Hertz. Set frequency at 5 kHz
+#define LEDC_FREQUENCY          (38000) // Frequency in Hertz. Set frequency at 38 kHz
 
 static void ledc_init(void)
 {
@@ -79,7 +79,7 @@ static void ledc_init(void)
         .speed_mode       = LEDC_MODE,
         .timer_num        = LEDC_TIMER,
         .duty_resolution  = LEDC_DUTY_RES,
-        .freq_hz          = LEDC_FREQUENCY,  // Set output frequency at 5 kHz
+        .freq_hz          = LEDC_FREQUENCY,  // Set output frequency at 38 kHz
         .clk_cfg          = LEDC_AUTO_CLK
     };
     ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
@@ -114,12 +114,10 @@ static void IRAM_ATTR timer0_ISR(void *ptr)
 
         if (bState)
         {
-            bState = 0;
             ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY));
         }
         else
         {
-            bState = 1;
             ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, 0));
         }
     }
@@ -132,7 +130,7 @@ static void IRAM_ATTR timer0_ISR(void *ptr)
 #define TIMER_TICKS            (TIMER_BASE_CLK / TIMER_DIVIDER)     // TIMER_BASE_CLK = APB_CLK = 80MHz
 #define SEC_TO_MICRO_SEC(x)    ((x) / 1000 / 1000)                  // Convert second to micro-second
 #define ALARM_VAL_US           SEC_TO_MICRO_SEC(TIMER_INTR_US * TIMER_TICKS)     // Alarm value in micro-seconds
-#define RX_TIMEOUT             ((IR_RX_BAUDS * 10) / 1000)
+#define RX_TIMEOUT_MS          ((IR_RX_BAUDS * 10) / 1000)
 
 /* Timer group0 TIMER_0 initialization */
 static void timer0_init(void)
@@ -307,7 +305,7 @@ uint8_t IR_ReceivePacket(uint8_t *data)
     // Checksum
     uint8_t len = 0;
     // Wait for 
-    uint8_t timeout = RX_TIMEOUT; 
+    uint8_t timeout = RX_TIMEOUT_MS; 
 
     while (len < MAX_PACKET_SIZE && timeout > 0)
     {
@@ -317,7 +315,7 @@ uint8_t IR_ReceivePacket(uint8_t *data)
             len++;
             *data = uartGetchar(IR_RX_UART_PORT);
             data++;
-            timeout = RX_TIMEOUT; 
+            timeout = RX_TIMEOUT_MS; 
         }
         else
         {
