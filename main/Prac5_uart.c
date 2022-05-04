@@ -132,6 +132,8 @@ static void IRAM_ATTR timer0_ISR(void *ptr)
 #define TIMER_TICKS            (TIMER_BASE_CLK / TIMER_DIVIDER)     // TIMER_BASE_CLK = APB_CLK = 80MHz
 #define SEC_TO_MICRO_SEC(x)    ((x) / 1000 / 1000)                  // Convert second to micro-second
 #define ALARM_VAL_US           SEC_TO_MICRO_SEC(TIMER_INTR_US * TIMER_TICKS)     // Alarm value in micro-seconds
+#define RX_TIMEOUT             ((IR_RX_BAUDS * 10) / 1000)
+
 /* Timer group0 TIMER_0 initialization */
 static void timer0_init(void)
 {
@@ -211,6 +213,14 @@ void uartPutchar(uart_port_t uart_num, char c)
     uart_write_bytes(uart_num, &c, sizeof(c));
 }
 
+void uartPuts(uart_port_t uart_num, char *str)
+{
+    while(*str)
+    {
+        uartPutchar(uart_num, *str++);
+    }
+}
+
 char uartGetchar(uart_port_t uart_num)
 {
     char c;
@@ -283,19 +293,58 @@ void IR_SendPacket(uint8_t *data, uint8_t len)
         // Checksum8  
     // Payload = Data
     // Checksum16
+    while (len--)
+    {
+        IR_SendByte(*data++);
+    }
 }
 
 uint8_t IR_ReceivePacket(uint8_t *data)
 {
     // Preambulo // verify
-    // Header   //verify
-    // Payload  //process
+    // Header   // verify
+    // Payload  // process
     // Checksum
-    return 0;
+    uint8_t len = 0;
+    // Wait for 
+    uint8_t timeout = RX_TIMEOUT; 
+
+    while (len < MAX_PACKET_SIZE && timeout > 0)
+    {
+        // Do we have data incoming on the IR interface
+        if (uartKbhit(IR_RX_UART_PORT))
+        {
+            len++;
+            *data = uartGetchar(IR_RX_UART_PORT);
+            data++;
+            timeout = RX_TIMEOUT; 
+        }
+        else
+        {
+            timeout--;
+        }
+        delayMs(1);
+    }
+    return len;
 }
+
+#define ASCII_TEST  0
+#define ECHO_TEST   1
+#define IR_CHAT     2
+
+#define APP_MODE IR_CHAT
 
 void app_main(void)
 {
+#if APP_MODE == IR_CHAT
+    uint8_t capturedLength = 0;
+    uint8_t capturedData[MAX_PACKET_SIZE];
+    uint8_t startOfCapture = 1;
+    char key;
+    uint8_t receivedLength = 0;
+    uint8_t receivedData[MAX_PACKET_SIZE];
+#endif
+
     uartInit(PC_UART_PORT, PC_UARTS_BAUD_RATE, 8, 0, 1, PC_UART_TX_PIN, PC_UART_RX_PIN);
     delayMs(500);
     uartGoto11(PC_UART_PORT);
@@ -303,39 +352,36 @@ void app_main(void)
     uartClrScr(PC_UART_PORT);
 #if SCHEME == UART_SEND_SCHEME
     uartInit(IR_TX_UART_PORT, IR_TX_BAUDS, IR_BIT_SIZE, 0, 1, IR_TX_TX_PIN, IR_TX_RX_PIN);
-#else
+#else // Timer scheme
     // Init Circular Buffer
     sIrSendBuffer.in_idx = 0;
     sIrSendBuffer.out_idx = 0;
-
+    // Init 38KHz LED modulation control
     ledc_init();
+    // Init Timer and ISR
     timer0_init();
     timer_start(TIMER_GROUP_0, TIMER_0);
 #endif
     uartInit(IR_RX_UART_PORT, IR_RX_BAUDS, 8, 0, 1, IR_RX_TX_PIN, IR_RX_RX_PIN);
     
-    // Wait for input
-    delayMs(500);
-    
-    // echo forever
     while(1)
     {
-#ifdef ASCII_TEST
+#if APP_MODE == ASCII_TEST
         uartPutchar(PC_UART_PORT,uartGetchar(PC_UART_PORT));
-
+        // Send all printable characters
         for (uint8_t data = 33; data < 127; data++)
         {
             IR_SendByte(data);
         }
-
-        delayMs(500);
+        // Wait for the data to get sent
+        delayMs(1000);
         while (uartKbhit(IR_RX_UART_PORT))
         {
             uartPutchar(PC_UART_PORT,'{');
             uartPutchar(PC_UART_PORT,uartGetchar(IR_RX_UART_PORT));
             uartPutchar(PC_UART_PORT,'}');
         }
-#else
+#elif APP_MODE == ECHO_TEST
         // Check if a key has been pressed
         if (uartKbhit(PC_UART_PORT))
         {
@@ -348,7 +394,76 @@ void app_main(void)
             // Send it over to the PC terminal
             uartPutchar(PC_UART_PORT,uartGetchar(IR_RX_UART_PORT));
         }
-        delayMs(1);
-#endif
+#else // IR Chat
+#define BACKSPACE_KEY   8
+#define ENTER_KEY       13
+
+    // Check if we have data over the IR interface
+    receivedLength = IR_ReceivePacket(receivedData);
+    if (receivedLength)
+    {
+        //go to beginning of current line and print the received packet
+        uartPuts(PC_UART_PORT, "\rGuest: ");
+        // Null terminate so that we an send it with uartPuts()
+        receivedData[receivedLength] = 0; 
+        uartPuts(PC_UART_PORT, (char*) receivedData);
+        // Now reprint captured line
+        uartPuts(PC_UART_PORT, "\n\rMe: ");
+        capturedData[capturedLength] = 0;
+        uartPuts(PC_UART_PORT, (char*) capturedData);
     }
+    // Check if we have data over the PC interface
+    if (startOfCapture)
+    {
+        uartPuts(PC_UART_PORT, "\n\rMe: ");
+        startOfCapture = 0;
+    }
+    else
+    {
+        // Do a local gets() over the captured data
+        // to achieve asynchronous prints of the recived IR data
+        if (uartKbhit(PC_UART_PORT))
+        {
+            key = uartGetchar(PC_UART_PORT);
+            switch (key)
+            {
+                case BACKSPACE_KEY:
+                {
+                    if (capturedLength > 0)
+                    {
+                        // No need to remove it from the array
+                        capturedLength--;
+                        // Remove it from the terminal
+                        uartPutchar(PC_UART_PORT, BACKSPACE_KEY);
+                        uartPutchar(PC_UART_PORT, ' ');
+                        uartPutchar(PC_UART_PORT, BACKSPACE_KEY);
+                    }
+                    break;
+                }
+                case ENTER_KEY:
+                {
+                    if (capturedLength > 0)
+                    {
+                        IR_SendPacket(capturedData, capturedLength);
+                        capturedLength = 0;
+                        startOfCapture = 1;
+                    }
+                    break;
+                }
+                default:
+                {
+                    // Send it over to the PC terminal
+                    uartPutchar(PC_UART_PORT, key);
+                    // Save it in the captured data array
+                    capturedData[capturedLength] = (uint8_t) key;
+                    capturedLength++;
+                    break;
+                }
+            }
+        }
+    }
+#endif
+        // Need to yield current task to not trigger watchdog
+        delayMs(1);
+    } 
 }
